@@ -1,0 +1,73 @@
+#!/bin/bash
+#SBATCH --output=logs/vcf_prep_%A_%a.log
+#SBATCH --time=20:00:00
+#SBATCH --job-name=genobert_vcf_prep
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+
+# Array: one task per chromosome (indices 0-23 map to chr1-22, X, Y)
+# Adjust range to process only a subset, e.g. --array=21 for chr22 only.
+#SBATCH --array=0-23%4
+
+# ============================================================
+# Load Credentials
+# ============================================================
+SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}/job"
+if [[ -f "${SCRIPT_DIR}/credentials.sh" ]]; then
+    source "${SCRIPT_DIR}/credentials.sh"
+else
+    echo "ERROR: credentials.sh not found."
+    echo "Copy credentials.sh.template to credentials.sh and fill in your settings."
+    exit 1
+fi
+
+# ============================================================
+# SLURM Configuration (from credentials.sh)
+# ============================================================
+#SBATCH --account=${SLURM_ACCOUNT}
+#SBATCH --partition=${SLURM_PARTITION_CPU}
+
+# Email notifications (from credentials.sh)
+#SBATCH --mail-user=${SLURM_EMAIL}
+#SBATCH --mail-type=${SLURM_MAIL_TYPE}
+
+# ============================================================
+# Environment Setup (from credentials.sh)
+# ============================================================
+if [[ -n "${CONDA_PATH}" ]]; then
+    source "${CONDA_PATH}/etc/profile.d/conda.sh"
+    conda activate "${CONDA_ENV:-genobert}"
+fi
+
+# ============================================================
+# Configuration - MODIFY THESE
+# ============================================================
+
+# Map SLURM array index to chromosome
+CHROMOSOMES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X Y)
+CHR=${CHROMOSOMES[$SLURM_ARRAY_TASK_ID]}
+
+# Pipeline step: clean | split | all
+STEP="all"
+
+# Root directory for all outputs (ref/, split/, subsets/, qc/ created inside)
+OUTPUT_DIR="${VCF_DIR:-/mnt/storage4/rallendes/snp_data/1KGP}"
+
+# Path to raw VCF for this chromosome
+RAW_VCF="${OUTPUT_DIR}/20190312_biallelic_SNV_and_INDEL/ALL.chr${CHR}.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz"
+
+# Path to 1KGP panel metadata file
+METADATA_FILE="${OUTPUT_DIR}/integrated_call_samples_v3.20130502.ALL.panel"
+
+# ============================================================
+# Run VCF Preparation
+# ============================================================
+echo "Array task ${SLURM_ARRAY_TASK_ID}: chromosome ${CHR}, step ${STEP}"
+
+python vcf_prep.py \
+    --step          $STEP \
+    --chr           $CHR \
+    --raw_vcf       $RAW_VCF \
+    --metadata_file $METADATA_FILE \
+    --output_dir    $OUTPUT_DIR \
+    --threads       $SLURM_CPUS_PER_TASK
