@@ -350,6 +350,17 @@ def _process_and_save_gene(gene_args_with_save_args):
     gene_args, save_args = gene_args_with_save_args
     gene_id = gene_args[0]
 
+    if save_args.get('skip_existing'):
+        split_dir = f"{save_args['output_dir']}/{save_args['split']}"
+        output_path = f"{split_dir}/{save_args['genotype_ds']}_chr{save_args['chr']}_{save_args['race']}_seg{model_input_width}_overlap{overlap_size}_{save_args['split']}_{gene_id}.hdf5"
+        if os.path.exists(output_path):
+            try:
+                with h5py.File(output_path, 'r'):
+                    pass
+                return {'gene_id': gene_id, 'status': 'skipped'}
+            except OSError:
+                pass  # corrupt — fall through and reprocess
+
     try:
         result = process_gene_block_pretrain_global(gene_args)
 
@@ -412,7 +423,8 @@ def process_gene_subset_pretrain_global(gene_subset, args):
         'node_id': args.node_id,
         'verbose': args.verbose,
         'overlap_threshold': args.overlap_threshold,
-        'min_snps': args.min_snps
+        'min_snps': args.min_snps,
+        'skip_existing': args.skip_existing
     }
 
     args_list = []
@@ -421,6 +433,7 @@ def process_gene_subset_pretrain_global(gene_subset, args):
         args_list.append((gene_args, save_args))
 
     saved_count = 0
+    skipped_count = 0
     failed_count = 0
     no_segments_count = 0
     filtered_genes = []
@@ -441,6 +454,8 @@ def process_gene_subset_pretrain_global(gene_subset, args):
 
                 if result['status'] == 'saved':
                     saved_count += 1
+                elif result['status'] == 'skipped':
+                    skipped_count += 1
                 elif result['status'] in ('no_segments', 'no_snps'):
                     no_segments_count += 1
                     filtered_genes.append({'gene_id': gene_id, 'reason': result.get('reason', result['status'])})
@@ -482,6 +497,7 @@ def process_gene_subset_pretrain_global(gene_subset, args):
     print(f"\nNode {args.node_id}: Processing complete")
     print(f"  Total genes: {len(gene_subset)}")
     print(f"  Saved: {saved_count}")
+    print(f"  Skipped (existing): {skipped_count}")
     print(f"  No segments: {no_segments_count}")
     print(f"  Failed: {failed_count}")
 
@@ -678,6 +694,8 @@ def main():
     parser.add_argument('--overlap_threshold', type=float, default=0.33,
                        help='Minimum ratio of SNPs in gene region')
     parser.add_argument('--verbose', action='store_true')
+    parser.add_argument('--skip_existing', action='store_true',
+                        help='Skip genes whose output HDF5 already exists and is valid')
     parser.add_argument('--num_workers', type=int, default=1,
                        help='Number of parallel workers')
 
