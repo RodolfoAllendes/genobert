@@ -149,9 +149,16 @@ def assign_populations(args, ref_vcf):
 
     pop_samples = dict(zip(meta["sample"], zip(meta["super_pop"], meta["gender"])))
 
+    # Include VCF samples not in the panel under a dummy superpop so they
+    # appear in the ALL split even without metadata.
+    unmatched = vcf_samples - set(pop_samples)
+    for sid in sorted(unmatched):
+        pop_samples[sid] = ("UNK", "unknown")
+
     print(f"  Metadata samples : {len(meta)}")
     print(f"  VCF samples      : {len(vcf_samples)}")
-    print(f"  Common           : {len(pop_samples)}")
+    print(f"  Common           : {len(pop_samples) - len(unmatched)}")
+    print(f"  Unmatched (→ ALL): {len(unmatched)}")
     print(f"  Distribution     : {dict(Counter(sp for sp, _ in pop_samples.values()))}")
 
     tmp = os.path.join(args.qc_dir, "temp")

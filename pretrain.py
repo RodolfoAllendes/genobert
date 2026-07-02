@@ -13,10 +13,13 @@ Usage:
     srun python pretrain.py --configFile configs/example.yaml
 """
 
-# Set CUDA device before importing torch (for SLURM)
+# Set CUDA device before importing torch (for SLURM or torchrun)
 import os
 if 'SLURM_LOCALID' in os.environ:
     local_rank = int(os.environ['SLURM_LOCALID'])
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(local_rank)
+elif 'LOCAL_RANK' in os.environ:
+    local_rank = int(os.environ['LOCAL_RANK'])
     os.environ['CUDA_VISIBLE_DEVICES'] = str(local_rank)
 
 from functools import partial
@@ -727,8 +730,8 @@ def main():
     config.run = f"{config.runId}_{config.dataset}_chr{config.chromosome}_{config.population}_seg{config.segLen}_overlap{config.overlap}"
 
     # Get distributed training info
-    rank = int(os.environ.get("SLURM_PROCID", 0))
-    world_size = int(os.environ.get("SLURM_NTASKS", 1))
+    rank = int(os.environ.get("SLURM_PROCID", os.environ.get("RANK", 0)))
+    world_size = int(os.environ.get("SLURM_NTASKS", os.environ.get("WORLD_SIZE", 1)))
 
     # Auto-generate checkpoint directory
     hla_suffix = ""
