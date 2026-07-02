@@ -1,12 +1,13 @@
-# GenoBERT — Data Preparation Pipeline
+# GenoBERT — Data Preparation & Training Pipeline
 
-This document tracks the complete data preparation pipeline for training GenoBERT
-on the 1000 Genomes Project (1KGP) dataset, including scripts added beyond the
-original repository.
+This document tracks the complete pipeline for training and evaluating GenoBERT,
+including scripts added beyond the original repository.
 
 ---
 
 ## Data Sources
+
+### 1KGP pipeline
 
 | Data | Location |
 |------|----------|
@@ -15,6 +16,17 @@ original repository.
 | GENCODE v50 GTF (GRCh38) | `/mnt/storage4/rallendes/snp_data/genecode/gencode.v50.annotation.gtf.gz` |
 | Split VCFs (output) | `dataset/1KGP/split/` |
 | Gene region files (output) | `dataset/genecode/split/` |
+
+### 24donor pipeline
+
+| Data | Location |
+|------|----------|
+| Reference VCF (3202 samples, 13k SNPs, chr22) | `/mnt/storage2/rallendes/data/scRNAseq/SNP_data/SNP_data_isec_complete/reference_version/chr22.phased_24donor_reference.vcf.gz` |
+| Population metadata (same as 1KGP) | `/mnt/storage4/rallendes/snp_data/1KGP/integrated_call_samples_v3.20130502.ALL.panel` |
+| Gene region files (reuse 1KGP) | `dataset/genecode/split/` |
+| Split VCFs (output) | `dataset/24donor/split/` |
+| scRNA-seq test VCFs (18 samples) | `/mnt/storage2/rallendes/data/scRNAseq/Lipid_High/variants/per_donor/possorted_genome_bam/mapphased/chr22/` |
+| Ground truth genotypes (18 samples) | `/mnt/storage2/rallendes/data/scRNAseq/SNP_data/SNP_data_isec_complete/chr22.phased_24donor_GTC_all_merged.vcf.gz` |
 
 ---
 
@@ -27,13 +39,14 @@ original repository.
 | 1 | `pretrain_data_prep.py` | Create per-gene HDF5 files from split VCFs |
 | 2 | `merge_genes.py` | Merge per-gene HDF5 files with deduplication |
 | 3 | `pretrain.py` | Train the model |
-| 4 | `test_pretrain.py` | Evaluate the trained model |
+| 4a | `test_pretrain.py` | Internal evaluation (random masking on reference test split) |
+| 4b | `eval_pretrain.py` | External evaluation on scRNA-seq samples vs ground truth |
 
 ---
 
 ## Step 0 — VCF Preparation (`vcf_prep.py`)
 
-Cleans raw 1KGP VCFs and produces population-stratified train/val/test splits.
+Cleans raw VCFs and produces population-stratified train/val/test splits.
 
 **Two sub-steps:**
 - `clean`: deduplicate variants, keep biallelic SNPs only, normalize multi-allelic sites.
@@ -43,16 +56,20 @@ Cleans raw 1KGP VCFs and produces population-stratified train/val/test splits.
   and 0.001 ≤ MAF ≤ 0.999 filters per split, then restricts all three splits to the
   intersection of variants passing QC.
 
+**Note:** VCF samples not present in the panel file are assigned to `UNK` superpopulation
+and included in the `ALL` split automatically. This handles the 24donor VCF where 698 of
+3202 samples have no panel metadata.
+
 **Output structure:**
 ```
-dataset/1KGP/
+dataset/{name}/
 ├── ref/      # cleaned reference VCF (all populations)
 ├── split/    # final VCFs: {stem}_{pop}_{split}.vcf.gz
 ├── subsets/  # sample ID lists per population and split
 └── qc/       # intermediate files
 ```
 
-**Command (chr22):**
+### 1KGP (chr22)
 ```bash
 python vcf_prep.py \
     --step all \
@@ -63,7 +80,22 @@ python vcf_prep.py \
     --threads 8
 ```
 
-**SLURM (all chromosomes):**
+### 24donor (chr22, ALL population only)
+```bash
+python vcf_prep.py \
+    --step all \
+    --chr 22 \
+    --raw_vcf /mnt/storage2/rallendes/data/scRNAseq/SNP_data/SNP_data_isec_complete/reference_version/chr22.phased_24donor_reference.vcf.gz \
+    --metadata_file /mnt/storage4/rallendes/snp_data/1KGP/integrated_call_samples_v3.20130502.ALL.panel \
+    --output_dir ./dataset/24donor \
+    --populations ALL \
+    --threads 8
+```
+
+Result: 3202 samples (2504 matched + 698 UNK) → 7,662 SNPs after HWE+MAF intersection.
+Train: 2559 samples | Val: 316 | Test: 327.
+
+**SLURM (1KGP, all chromosomes):**
 ```bash
 sbatch --array=0-23%4 job/00_vcf_prep.batch
 ```
@@ -76,6 +108,8 @@ sbatch --array=0-23%4 job/00_vcf_prep.batch
 Only three columns are needed (`TargetID`, `GeneStart`, `GeneEnd`) — no expression values.
 All population/split combinations for the same chromosome share the same gene list.
 
+The 24donor pipeline reuses the same gene region files generated for 1KGP.
+
 **Command (chr22, all populations):**
 ```bash
 python gene_regions_prep.py \
@@ -87,15 +121,15 @@ python gene_regions_prep.py \
 ```
 
 Produces 15 files (6 populations × 3 splits) under `dataset/genecode/split/{pop}/`.
-Add `--all_gene_types` to include lncRNA and other biotypes beyond protein-coding.
+Found 447 protein-coding genes on chr22.
 
 ---
 
 ## Step 1 — Per-Gene HDF5 Files (`pretrain_data_prep.py`)
 
 Creates per-gene HDF5 files from split VCFs using global SNP-index segmentation.
-The VCF loading phase (~1000s for chr22/ALL) is single-threaded; parallelism starts
-only after the full chromosome is loaded into memory.
+The VCF loading phase is single-threaded; parallelism starts only after the full
+chromosome is loaded into memory.
 
 **Parallelism notes:**
 - This is a CPU-only step — set `OMP_NUM_THREADS=1` etc. to prevent numpy from
@@ -104,7 +138,7 @@ only after the full chromosome is loaded into memory.
   Use `--skip_existing` on re-runs so valid files from previous runs are preserved.
 - Reduce `--num_workers` (8–10) when retrying failures to lower NFS contention.
 
-**Command (chr22, ALL population, train split):**
+### 1KGP (chr22, ALL population)
 ```bash
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 python pretrain_data_prep.py \
     --genotype_ds 1KGP \
@@ -124,7 +158,31 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 python pretrain_data_
     --verbose
 ```
 
-Repeat with `--split val` and `--split test`.
+### 24donor (chr22, ALL population)
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 python pretrain_data_prep.py \
+    --genotype_ds 24donor \
+    --gene_ds genecode \
+    --chr 22 \
+    --race ALL \
+    --gene_pop ALL \
+    --split train \
+    --node_id 0 \
+    --total_nodes 1 \
+    --pretrain_vcf dataset/24donor/split/chr22.phased_24donor_reference_ALL_train.vcf.gz \
+    --gene_exp_path dataset/genecode/split \
+    --output_dir ./res_pt/24donor \
+    --model_input_width 258 \
+    --overlap_size 8 \
+    --min_snps 10 \
+    --num_workers 30 \
+    --verbose
+```
+
+Repeat with `--split val` and `--split test`. The `--min_snps 10` threshold is used
+because the 24donor VCF has only 7,662 SNPs on chr22 (vs ~245k for 1KGP), so the
+default of 32 would exclude too many genes. Even with 10, 213/447 genes have no SNPs
+in their region and produce no output.
 
 **Handling NFS write failures:**
 
@@ -135,12 +193,19 @@ Some genes may fail on the first run due to NFS contention. The summary shows
 # 1. Remove corrupt (partially written) HDF5 files
 python - <<'EOF'
 import h5py, os, glob
-for f in sorted(glob.glob("res_pt/1KGP/train/*.hdf5")):
+files = sorted(glob.glob("res_pt/1KGP/train/*.hdf5"))
+removed, valid = 0, 0
+for f in files:
     try:
-        with h5py.File(f, 'r'): pass
+        with h5py.File(f, 'r') as fh:
+            _ = fh['snps'][:]
+            _ = fh['snpsIndex'][:]
+        valid += 1
     except OSError:
         print(f"Removing: {f}")
         os.remove(f)
+        removed += 1
+print(f"Total: {len(files)} | Valid: {valid} | Removed: {removed}")
 EOF
 
 # 2. Re-run with --skip_existing and fewer workers to reduce contention
@@ -164,38 +229,138 @@ sbatch --array=0-199%50 --cpus-per-task=4 --mem=64G job/01_data_prep_array.batch
 
 Merges per-gene HDF5 files into a single file with optional deduplication.
 
-```bash
-python merge_genes.py \
-    --input_dir ./res_pt/1KGP/train \
-    --prefix 1KGP_chr22_ALL_seg258_overlap8_train \
-    --apply_dedup
+**NFS issue:** Both reads and writes of large HDF5 files over NFS fail intermittently
+with `errno = 5` (Input/output error). Two workarounds:
+1. **Run on the NFS host directly** — if you SSH into the machine that owns `/mnt/storage4/`,
+   operations are local and the problem disappears.
+2. **Use local disk as staging** — write to `/tmp`, merge there, move result to NFS.
 
+```bash
+# Check and remove corrupt per-gene files before merging (repeat for val/test)
+python - <<'EOF'
+import h5py, os, glob
+files = sorted(glob.glob("res_pt/1KGP/train/*.hdf5"))
+removed, valid = 0, 0
+for f in files:
+    try:
+        with h5py.File(f, 'r') as fh:
+            _ = fh['snps'][:]
+            _ = fh['snpsIndex'][:]
+        valid += 1
+    except OSError:
+        print(f"Removing: {f}")
+        os.remove(f)
+        removed += 1
+print(f"Total: {len(files)} | Valid: {valid} | Removed: {removed}")
+EOF
+
+# Train
 python merge_genes.py \
-    --input_dir ./res_pt/1KGP/val \
+    --input_dir res_pt/1KGP/train \
+    --output_dir /tmp/merge_train \
+    --prefix 1KGP_chr22_ALL_seg258_overlap8_train \
+    --apply_dedup --shuffle_seed 42
+mv /tmp/merge_train/*.hdf5 res_pt/1KGP/train/
+
+# Val
+python merge_genes.py \
+    --input_dir res_pt/1KGP/val \
+    --output_dir /tmp/merge_val \
     --prefix 1KGP_chr22_ALL_seg258_overlap8_val \
-    --apply_dedup
+    --apply_dedup --shuffle_seed 42
+mv /tmp/merge_val/*.hdf5 res_pt/1KGP/val/
+
+# Test
+python merge_genes.py \
+    --input_dir res_pt/1KGP/test \
+    --output_dir /tmp/merge_test \
+    --prefix 1KGP_chr22_ALL_seg258_overlap8_test \
+    --apply_dedup --shuffle_seed 42
+mv /tmp/merge_test/*.hdf5 res_pt/1KGP/test/
 ```
+
+Replace `1KGP` with `24donor` and update prefixes for the 24donor pipeline.
 
 ---
 
 ## Step 3 — Train (`pretrain.py`)
 
+### Single GPU
 ```bash
-python pretrain.py --configFile configs/1KGP_chr22_ALL.yaml
+MASTER_ADDR=localhost MASTER_PORT=12341 python pretrain.py \
+    --configFile configs/24donor_chr22_ALL.yaml
 ```
 
-See `configs/example_pretrain.yaml` for configuration options. Key parameters must
-match the data prep settings (`segLen`, `overlap`, `population`, `chromosome`).
+### Multi-GPU (torchrun)
+```bash
+torchrun --nproc_per_node=2 --master_port=12341 pretrain.py \
+    --configFile configs/24donor_chr22_ALL.yaml
+```
+
+`pretrain.py` supports both SLURM (`srun`) and `torchrun` launchers.
+Stage merged HDF5 files to local `/tmp` before training to avoid NFS read latency —
+set `resPtDir: /tmp` in the config.
+
+### 24donor results (chr22, ALL, 100 epochs, 2× RTX PRO 6000)
+- Training time: ~1h54m
+- Checkpoints saved every 10 epochs to `checkpoints_pt/24donor_ALL_chr22/`
+
+See `configs/24donor_chr22_ALL.yaml` and `configs/1KGP_chr22_ALL.yaml` for full settings.
 
 ---
 
-## Step 4 — Test (`test_pretrain.py`)
+## Step 4a — Internal Test (`test_pretrain.py`)
 
-Prepare test HDF5 files first (same as Step 1 with `--split test`), then:
+Evaluates the model on the reference test split with random masking.
+Run after building the test HDF5 (Step 1 + Step 2 with `--split test`).
 
 ```bash
-python test_pretrain.py \
-    --configFile configs/1KGP_chr22_ALL.yaml \
-    --checkpoint checkpoints_pt/1KGP_ALL_chr22/checkpoint_epoch_100.pth \
+# Stage test data to local disk
+mkdir -p /tmp/24donor/test
+cp res_pt/24donor/test/24donor_chr22_ALL_seg258_overlap8_test_all.hdf5 /tmp/24donor/test/
+
+MASTER_ADDR=localhost MASTER_PORT=12341 python test_pretrain.py \
+    --configFile configs/24donor_chr22_ALL.yaml \
+    --checkpoint checkpoints_pt/24donor_ALL_chr22/pt_24donor_ALL_chr22_PT_epoch_100.pth \
     --maskProb 0.05 0.15 0.5
 ```
+
+### 24donor internal test results (epoch 100)
+
+| Mask % | Loss | All Acc | Masked Acc |
+|--------|------|---------|------------|
+| 5% | 0.0069 | 0.9939 | 0.9206 |
+| 15% | 0.0102 | 0.9879 | 0.9204 |
+| 50% | 0.0470 | 0.9399 | 0.8800 |
+
+Per-class accuracy at 50% masking: `0|0`: 97.86% · `0|1`: 85.06% · `1|0`: 84.88% · `1|1`: 93.70%
+
+---
+
+## Step 4b — External Evaluation on scRNA-seq Samples (`eval_pretrain.py`)
+
+Evaluates imputation accuracy on 18 external scRNA-seq test samples.
+Each sample's observed scRNA-seq variant calls are kept; all other positions in the
+training SNP set are masked for the model to impute. Predictions are compared against
+microarray ground truth. Reports concordance (genotype match rate) and R²
+(Pearson r² between imputed and true dosage, using soft model probabilities).
+
+```bash
+python eval_pretrain.py \
+    --configFile configs/24donor_chr22_ALL.yaml \
+    --checkpoint checkpoints_pt/24donor_ALL_chr22/pt_24donor_ALL_chr22_PT_epoch_100.pth \
+    --snp_vcf dataset/24donor/split/chr22.phased_24donor_reference_ALL_train.vcf.gz \
+    --scrna_dir /mnt/storage2/rallendes/data/scRNAseq/Lipid_High/variants/per_donor/possorted_genome_bam/mapphased/chr22 \
+    --ground_truth /mnt/storage2/rallendes/data/scRNAseq/SNP_data/SNP_data_isec_complete/chr22.phased_24donor_GTC_all_merged.vcf.gz
+```
+
+**Arguments:**
+- `--snp_vcf`: defines the 7,662-SNP universe the model was trained on
+- `--scrna_dir`: per-sample VCFs with sparse scRNA-seq variant calls (one file per sample)
+- `--ground_truth`: multi-sample microarray VCF used as truth for scoring
+
+**Note on context sparsity:** scRNA-seq samples have only 13–114 observed positions out of
+7,662 training SNPs (<1.5% context). At this extreme masking level the model defaults to
+predicting 0|0 (majority class), achieving high 0|0 accuracy but poor het/1|1 accuracy.
+This is a fundamental limitation compared to reference-panel-based tools (BEAGLE, STICI)
+which explicitly match sparse observations against haplotype panels.
