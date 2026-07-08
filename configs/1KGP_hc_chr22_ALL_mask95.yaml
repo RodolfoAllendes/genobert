@@ -1,0 +1,72 @@
+# GenoBERT Pretraining Configuration — 1KGP_hc chr22 ALL
+# Trained on 1kGP_high_coverage_Illumina.chr22.filtered.SNV_INDEL_SV_phased_panel_maf05.vcf.gz
+# 62,422 SNPs (MAF>0.05, HWE>1e-6), 2559 train samples
+
+# ================== Data Parameters ==================
+runId: 1KGP_hc_ALL_chr22_PT_mask95
+dataset: 1KGP_hc
+genotypeDataset: 1KGP_hc
+chromosome: 22
+population: ALL
+segLen: 258
+overlap: 8
+
+unique: True
+hlaOnly: False
+
+resDir: ./res
+resPtDir: /tmp
+
+# ================== Vocabulary ==================
+vocabSize: 8
+padId: 7
+maskId: 0
+CLSId: 5
+SEPId: 6
+
+# ================== Model Architecture ==================
+embDim: 512
+numHeads: 4
+numLayers: 6
+weightSharing: 0
+dropoutRate: 0.0
+
+enableBias: True
+initBiasWeight: 0.0
+
+useCNNBottleneck: True
+bottleneckShape: 4
+cnnKernelSize: 3
+
+sparseAttention: False
+localWinSize: 64
+globalAttentionIds: [0]
+
+# ================== Training Parameters ==================
+batchSize: 128
+numWorkers: 12
+persistentWorkers: True
+seed: 0
+
+learningRate: 0.0008
+weightDecay: 0.001
+
+scheduler: cosineAnn
+totalEpochs: 100
+warmupEpochs: 10
+cooldownEpochs: 0
+
+maskProb: 0.95
+sampling: normal
+lossType: focalLoss
+focalGamma: 2.0
+benchmarkAll: True
+
+useMixedPrecision: False
+
+checkpointPrefix: "mask95_"
+saveCheckpointFreq: 10
+
+useWandB: False
+wandbProject: GenoBERT
+WandBKey: ""
