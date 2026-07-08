@@ -1,0 +1,66 @@
+{
+  "config_file": "configs/1KGP_chr22_ALL.yaml",
+  "checkpoint": "checkpoints_pt/1KGP_ALL_chr22/pt_1KGP_ALL_chr22_PT_epoch_5.pth",
+  "run_id": "1KGP_ALL_chr22_PT",
+  "dataset": "1KGP",
+  "chromosome": 22,
+  "population": "ALL",
+  "num_test_files": 1,
+  "timestamp": "2026-07-01T15:49:22.730911",
+  "results": {
+    "mask_5pct": {
+      "loss": 0.009694802482602054,
+      "accuracy": 0.9922638582872182,
+      "masked_accuracy": 0.8639797800869083,
+      "total_samples": 51956132,
+      "masked_samples": 2600209,
+      "mask_prob": 0.05,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.9991365757700208,
+        "0|1": 0.9492350978338673,
+        "1|0": 0.9497548908785536,
+        "1|1": 0.9520369237302119,
+        "CLS": 1.0,
+        "SEP": 0.999940433051714
+      }
+    },
+    "mask_15pct": {
+      "loss": 0.022909764529815267,
+      "accuracy": 0.9793277143879764,
+      "masked_accuracy": 0.8632212615647195,
+      "total_samples": 51956132,
+      "masked_samples": 7797206,
+      "mask_prob": 0.15,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.9990032682058656,
+        "0|1": 0.8566961133756523,
+        "1|0": 0.8556696539041119,
+        "1|1": 0.8658148949906329,
+        "CLS": 1.0,
+        "SEP": 0.9999503608764284
+      }
+    },
+    "mask_50pct": {
+      "loss": 0.08208692286793019,
+      "accuracy": 0.9304995991618468,
+      "masked_accuracy": 0.8610753973541976,
+      "total_samples": 51956132,
+      "masked_samples": 25979718,
+      "mask_prob": 0.5,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.9982285649531158,
+        "0|1": 0.5136990975868756,
+        "1|0": 0.5105828935783301,
+        "1|1": 0.5289064303398706,
+        "CLS": 0.9999950360876428,
+        "SEP": 1.0
+      }
+    }
+  }
+}

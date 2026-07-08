@@ -1,0 +1,84 @@
+{
+  "config_file": "configs/1KGP_hc_chr22_ALL_mask95.yaml",
+  "checkpoint": "checkpoints_pt/1KGP_hc_ALL_chr22/pt_1KGP_hc_ALL_chr22_PT_mask95_epoch_100.pth",
+  "run_id": "1KGP_hc_ALL_chr22_PT_mask95",
+  "dataset": "1KGP_hc",
+  "chromosome": 22,
+  "population": "ALL",
+  "num_test_files": 1,
+  "timestamp": "2026-07-06T11:29:32.783424",
+  "results": {
+    "mask_5pct": {
+      "loss": 0.35040809303223514,
+      "accuracy": 0.7564328417682731,
+      "masked_accuracy": 0.5883994097973191,
+      "total_samples": 17632254,
+      "masked_samples": 881731,
+      "mask_prob": 0.05,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.852736202248749,
+        "0|1": 0.642488538414738,
+        "1|0": 0.7154454013670735,
+        "1|1": 0.5435944553767798,
+        "CLS": 0.93461999240277,
+        "SEP": 0.9399380533559302
+      }
+    },
+    "mask_15pct": {
+      "loss": 0.33830243711325847,
+      "accuracy": 0.7822695271971468,
+      "masked_accuracy": 0.5907999183525356,
+      "total_samples": 17632254,
+      "masked_samples": 2645520,
+      "mask_prob": 0.15,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.8710533721039302,
+        "0|1": 0.7190072951799035,
+        "1|0": 0.7146736663251144,
+        "1|1": 0.5749536983447158,
+        "CLS": 0.9813283464336849,
+        "SEP": 0.9402010343920755
+      }
+    },
+    "mask_50pct": {
+      "loss": 0.3887998664266066,
+      "accuracy": 0.7340496569525371,
+      "masked_accuracy": 0.5746138360223435,
+      "total_samples": 17632254,
+      "masked_samples": 8817433,
+      "mask_prob": 0.5,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.8318579911338768,
+        "0|1": 0.6272421255305234,
+        "1|0": 0.616404719905576,
+        "1|1": 0.5754626548211599,
+        "CLS": 0.9916430470736055,
+        "SEP": 0.9384332174268767
+      }
+    },
+    "mask_95pct": {
+      "loss": 0.5449457000789576,
+      "accuracy": 0.5588229389163745,
+      "masked_accuracy": 0.5360160518007384,
+      "total_samples": 17632254,
+      "masked_samples": 16751267,
+      "mask_prob": 0.95,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.7692268243047597,
+        "0|1": 0.27295676728319096,
+        "1|0": 0.27285819206474793,
+        "1|1": 0.3011955232087047,
+        "CLS": 0.9851415714577916,
+        "SEP": 0.9511585775647956
+      }
+    }
+  }
+}

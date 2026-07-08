@@ -1,0 +1,66 @@
+{
+  "config_file": "configs/24donor_chr22_ALL.yaml",
+  "checkpoint": "checkpoints_pt/24donor_ALL_chr22/pt_24donor_ALL_chr22_PT_epoch_100.pth",
+  "run_id": "24donor_ALL_chr22_PT",
+  "dataset": "24donor",
+  "chromosome": 22,
+  "population": "ALL",
+  "num_test_files": 1,
+  "timestamp": "2026-07-02T15:02:18.130673",
+  "results": {
+    "mask_5pct": {
+      "loss": 0.006854778174484184,
+      "accuracy": 0.9938965518708025,
+      "masked_accuracy": 0.9206448982365533,
+      "total_samples": 2351130,
+      "masked_samples": 117724,
+      "mask_prob": 0.05,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.9947904876356879,
+        "0|1": 0.9907449609186332,
+        "1|0": 0.9904946138415587,
+        "1|1": 0.9954949375269281,
+        "CLS": 0.9996723460026212,
+        "SEP": 0.9994539100043687
+      }
+    },
+    "mask_15pct": {
+      "loss": 0.010209290486117314,
+      "accuracy": 0.9879160233589805,
+      "masked_accuracy": 0.9203616550450086,
+      "total_samples": 2351130,
+      "masked_samples": 352933,
+      "mask_prob": 0.15,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.9950088547880274,
+        "0|1": 0.9716022339984082,
+        "1|0": 0.971289715042759,
+        "1|1": 0.9871418569582077,
+        "CLS": 1.0,
+        "SEP": 1.0
+      }
+    },
+    "mask_50pct": {
+      "loss": 0.04698775163432052,
+      "accuracy": 0.9399395184443226,
+      "masked_accuracy": 0.8799740227063307,
+      "total_samples": 2351130,
+      "masked_samples": 1176412,
+      "mask_prob": 0.5,
+      "seed": 42,
+      "benchmark_all": true,
+      "per_class_accuracy": {
+        "0|0": 0.9785512504067089,
+        "0|1": 0.8505520370609724,
+        "1|0": 0.8487720648586793,
+        "1|1": 0.9369856742783284,
+        "CLS": 1.0,
+        "SEP": 1.0
+      }
+    }
+  }
+}
