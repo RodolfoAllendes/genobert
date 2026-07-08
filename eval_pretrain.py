@@ -38,6 +38,7 @@ from model.genobert import GenoBERTMLM
 GT_TO_TOKEN    = {'0|0': 1, '0|1': 2, '1|0': 3, '1|1': 4}
 TOKEN_TO_GT    = {v: k for k, v in GT_TO_TOKEN.items()}
 TOKEN_TO_DOSAGE = {1: 0, 2: 1, 3: 1, 4: 2}   # alt allele count: 0|0→0, het→1, 1|1→2
+HET_TOKENS     = {2, 3}                        # 0|1 and 1|0 — equivalent unphased
 
 MASK_ID     = 0
 CLS_ID      = 5
@@ -187,9 +188,11 @@ def evaluate_sample(model, sample_id, scrna_vcf, gt_vcf, snps, segments, config,
 
     # Evaluate masked positions only; skip overlapping SNPs after first occurrence
     seen = set()
-    correct = total = 0
-    pc_correct = defaultdict(int)
-    pc_total   = defaultdict(int)
+    correct = unphased_correct = total = 0
+    pc_correct          = defaultdict(int)
+    pc_total            = defaultdict(int)
+    unphased_pc_correct = defaultdict(int)  # 'het' aggregates 0|1 + 1|0
+    unphased_pc_total   = defaultdict(int)
     true_dosages = []
     pred_dosages = []
 
@@ -203,11 +206,21 @@ def evaluate_sample(model, sample_id, scrna_vcf, gt_vcf, snps, segments, config,
             true_tok = truth.get(pos)
             if true_tok is None:
                 continue
-            gt_name = TOKEN_TO_GT[true_tok]
+            pred_tok = preds[si, t]
+            gt_name  = TOKEN_TO_GT[true_tok]
+            gt_unphased = 'het' if true_tok in HET_TOKENS else gt_name
+
             pc_total[gt_name] += 1
-            if preds[si, t] == true_tok:
+            unphased_pc_total[gt_unphased] += 1
+
+            if pred_tok == true_tok:
                 correct += 1
                 pc_correct[gt_name] += 1
+            # unphased: het→het is correct regardless of phase direction
+            if (true_tok in HET_TOKENS and pred_tok in HET_TOKENS) or pred_tok == true_tok:
+                unphased_correct += 1
+                unphased_pc_correct[gt_unphased] += 1
+
             total += 1
             seen.add(pos)
 
@@ -215,8 +228,10 @@ def evaluate_sample(model, sample_id, scrna_vcf, gt_vcf, snps, segments, config,
             true_dosages.append(TOKEN_TO_DOSAGE[true_tok])
             pred_dosages.append(float(probs[si, t, 2] + probs[si, t, 3] + 2 * probs[si, t, 4]))
 
-    acc    = correct / total if total else 0.0
-    pc_acc = {gt: pc_correct[gt] / pc_total[gt] for gt in pc_total}
+    acc             = correct          / total if total else 0.0
+    unphased_acc    = unphased_correct / total if total else 0.0
+    pc_acc          = {gt: pc_correct[gt]          / pc_total[gt]          for gt in pc_total}
+    unphased_pc_acc = {gt: unphased_pc_correct[gt] / unphased_pc_total[gt] for gt in unphased_pc_total}
 
     # Pearson R² between imputed dosage and true dosage
     r2 = 0.0
@@ -226,21 +241,20 @@ def evaluate_sample(model, sample_id, scrna_vcf, gt_vcf, snps, segments, config,
         if td.std() > 0 and pd.std() > 0:
             r2 = float(np.corrcoef(td, pd)[0, 1] ** 2)
 
-    # Concordance = genotype-level match rate (same as accuracy, explicit name)
-    concordance = acc
-
     return {
-        'sample_id':          sample_id,
-        'n_snps':             len(snps),
-        'n_observed':         len(observed),
-        'n_imputed':          total,
-        'n_correct':          correct,
-        'concordance':        concordance,
-        'r2':                 r2,
-        'per_class_accuracy': pc_acc,
-        'per_class_total':    dict(pc_total),
-        # kept for backward compat
-        'accuracy':           concordance,
+        'sample_id':                    sample_id,
+        'n_snps':                       len(snps),
+        'n_observed':                   len(observed),
+        'n_imputed':                    total,
+        'n_correct':                    correct,
+        'concordance':                  acc,
+        'unphased_concordance':         unphased_acc,
+        'r2':                           r2,
+        'per_class_accuracy':           pc_acc,
+        'per_class_total':              dict(pc_total),
+        'unphased_per_class_accuracy':  unphased_pc_acc,
+        'unphased_per_class_total':     dict(unphased_pc_total),
+        'accuracy':                     acc,   # backward compat
     }
 
 
@@ -319,9 +333,11 @@ def main():
         results.append(r)
 
     # Aggregate across samples
-    tot_correct = sum(r['n_correct'] for r in results)
-    tot_imputed = sum(r['n_imputed'] for r in results)
-    overall_concordance = tot_correct / tot_imputed if tot_imputed else 0.0
+    tot_correct          = sum(r['n_correct']          for r in results)
+    tot_unphased_correct = sum(r['unphased_concordance'] * r['n_imputed'] for r in results)
+    tot_imputed          = sum(r['n_imputed']           for r in results)
+    overall_concordance          = tot_correct          / tot_imputed if tot_imputed else 0.0
+    overall_unphased_concordance = tot_unphased_correct / tot_imputed if tot_imputed else 0.0
     mean_r2 = float(np.mean([r['r2'] for r in results])) if results else 0.0
 
     agg_c = defaultdict(int)
@@ -332,46 +348,57 @@ def main():
             agg_c[gt] += round(r['per_class_accuracy'][gt] * n)
     agg_acc = {gt: agg_c[gt] / agg_t[gt] for gt in agg_t}
 
-    # Summary table (matches test_pretrain.py style)
-    print(f"\n{'='*72}")
+    uagg_c = defaultdict(int)
+    uagg_t = defaultdict(int)
+    for r in results:
+        for gt, n in r['unphased_per_class_total'].items():
+            uagg_t[gt] += n
+            uagg_c[gt] += round(r['unphased_per_class_accuracy'][gt] * n)
+    uagg_acc = {gt: uagg_c[gt] / uagg_t[gt] for gt in uagg_t}
+
+    # Summary table
+    print(f"\n{'='*80}")
     print(f"Summary ({len(results)} samples evaluated)")
-    print(f"{'Sample':<30} {'Observed':>10} {'Imputed':>10} {'Concordance':>13} {'R²':>8}")
-    print('-' * 73)
+    print(f"{'Sample':<30} {'Observed':>10} {'Imputed':>10} {'Concordance':>13} {'Unphased':>10} {'R²':>8}")
+    print('-' * 81)
     for r in results:
         obs_str = f"{r['n_observed']}/{r['n_snps']}"
         print(f"  {r['sample_id']:<28} {obs_str:>10} {r['n_imputed']:>10} "
-              f"{r['concordance']:>13.4f} {r['r2']:>8.4f}")
-    print('-' * 73)
+              f"{r['concordance']:>13.4f} {r['unphased_concordance']:>10.4f} {r['r2']:>8.4f}")
+    print('-' * 81)
     print(f"  {'Overall':<28} {'':>10} {tot_imputed:>10} "
-          f"{overall_concordance:>13.4f} {mean_r2:>8.4f}")
+          f"{overall_concordance:>13.4f} {overall_unphased_concordance:>10.4f} {mean_r2:>8.4f}")
 
-    print(f"\nPer-class accuracy (aggregated):")
-    token_order = ['0|0', '0|1', '1|0', '1|1']
-    for gt in token_order:
+    print(f"\nPer-class accuracy (phased / unphased):")
+    for gt in ['0|0', '0|1', '1|0', '1|1']:
         if gt in agg_acc:
             print(f"  {gt}: {agg_acc[gt]:.4f}  (n={agg_t[gt]:,})")
-    print(f"{'='*72}\n")
+    print(f"  het (unphased): {uagg_acc.get('het', 0):.4f}  (n={uagg_t.get('het', 0):,})")
+    print(f"{'='*80}\n")
 
     # Save results
     output_file = args.output or f"eval_results_{config.runId}.json"
     output_data = {
-        'config_file':          args.configFile,
-        'checkpoint':           args.checkpoint,
-        'snp_vcf':              args.snp_vcf,
-        'run_id':               config.runId,
-        'dataset':              config.dataset,
-        'chromosome':           config.chromosome,
-        'population':           config.population,
-        'n_samples':            len(results),
-        'n_snps':               len(snps),
-        'n_segments':           len(segments),
-        'timestamp':            datetime.now().isoformat(),
-        'overall_concordance':  overall_concordance,
-        'mean_r2':              mean_r2,
-        'total_imputed':        tot_imputed,
-        'per_class_accuracy':   agg_acc,
-        'per_class_total':      dict(agg_t),
-        'per_sample':           results,
+        'config_file':                       args.configFile,
+        'checkpoint':                        args.checkpoint,
+        'snp_vcf':                           args.snp_vcf,
+        'run_id':                            config.runId,
+        'dataset':                           config.dataset,
+        'chromosome':                        config.chromosome,
+        'population':                        config.population,
+        'n_samples':                         len(results),
+        'n_snps':                            len(snps),
+        'n_segments':                        len(segments),
+        'timestamp':                         datetime.now().isoformat(),
+        'overall_concordance':               overall_concordance,
+        'overall_unphased_concordance':      overall_unphased_concordance,
+        'mean_r2':                           mean_r2,
+        'total_imputed':                     tot_imputed,
+        'per_class_accuracy':                agg_acc,
+        'per_class_total':                   dict(agg_t),
+        'unphased_per_class_accuracy':       uagg_acc,
+        'unphased_per_class_total':          dict(uagg_t),
+        'per_sample':                        results,
     }
     with open(output_file, 'w') as f:
         json.dump(output_data, f, indent=2)
